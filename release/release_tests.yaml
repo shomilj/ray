@@ -4609,7 +4609,7 @@
 
   # TODO: Migrate this test to Anyscale Jobs / staging_v2 once the test has been confirmed
   # to be stable.
-  env: staging_v1
+  env: premerge
 
   frequency: nightly
   team: data
@@ -4625,7 +4625,6 @@
     wait_for_nodes:
       num_nodes: 20
 
-    type: sdk_command
 
 #####################
 # Observability tests
