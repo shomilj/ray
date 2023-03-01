@@ -4581,7 +4581,7 @@
 
   # TODO: Migrate this test to Anyscale Jobs / staging_v2 once the test has been confirmed
   # to be stable.
-  env: premerge
+  env: staging_v2
 
   frequency: nightly
   team: data
@@ -4608,7 +4608,7 @@
 
   # TODO: Migrate this test to Anyscale Jobs / staging_v2 once the test has been confirmed
   # to be stable.
-  env: premerge
+  env: staging_v2
 
   frequency: nightly
   team: data
