@@ -4581,7 +4581,7 @@
 
   # TODO: Migrate this test to Anyscale Jobs / staging_v2 once the test has been confirmed
   # to be stable.
-  env: staging_v2
+  env: lanbo
 
   frequency: nightly
   team: data
