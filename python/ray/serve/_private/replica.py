@@ -837,8 +837,8 @@ class ReplicaBase(ABC):
 
         try:
             await asyncio.wrap_future(self._user_callable_wrapper.call_destructor())
-        except:  # noqa: E722
-            # We catch a blanket exception since the constructor may still be
+        except Exception as e:
+            # We catch exceptions since the constructor may still be
             # running, so instance variables used by the destructor may not exist.
             if self._user_callable_initialized:
                 logger.exception(

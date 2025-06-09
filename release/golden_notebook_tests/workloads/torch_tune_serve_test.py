@@ -197,7 +197,7 @@ def predict_and_validate(index, image, label):
         )
         try:
             return response.json()["result"]
-        except:  # noqa: E722
+        except Exception:  # noqa: E722
             return -1
 
     prediction = predict(image)
