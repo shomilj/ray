@@ -42,6 +42,7 @@ def _plan_hash_shuffle_repartition(
             logical_op._num_outputs or data_context.default_hash_shuffle_parallelism
         ),
         should_sort=logical_op._sort,
+        strict_mode=logical_op._strict_mode,
         # TODO wire in aggregator args overrides
     )
 

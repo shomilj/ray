@@ -17,6 +17,7 @@ from typing import (
     Optional,
     Tuple,
     Union,
+    Generator,
 )
 
 import numpy as np
@@ -156,6 +157,69 @@ class Concat(StatefulShuffleAggregation):
 
     def clear(self, partition_id: int):
         self._partition_block_builders.pop(partition_id)
+
+
+class StreamingConcat(StatefulShuffleAggregation):
+    """Streaming aggregation that immediately yields blocks as they arrive,
+    without concatenating blocks with the same key. Used for non-strict mode
+    where rows with the same key can be spread across multiple blocks.
+    """
+
+    def __init__(
+        self,
+        aggregator_id: int,
+        target_partition_ids: List[int],
+        *,
+        should_sort: bool,
+        key_columns: Optional[Tuple[str]] = None,
+    ):
+        super().__init__(aggregator_id)
+
+        assert (
+            not should_sort or key_columns
+        ), f"Key columns have to be specified when `should_sort=True` (got {list(key_columns)})"
+
+        self._should_sort = should_sort
+        self._key_columns = key_columns
+        
+        # Queue of blocks ready to be yielded for each partition
+        self._partition_block_queues: Dict[int, Deque[Block]] = {
+            partition_id: deque() for partition_id in target_partition_ids
+        }
+
+    def accept(self, input_seq_id: int, partition_id: int, partition_shard: Block):
+        assert input_seq_id == 0, (
+            f"StreamingConcat is unary stateful aggregation, got sequence "
+            f"index of {input_seq_id}"
+        )
+        assert partition_id in self._partition_block_queues, (
+            f"Received shard from unexpected partition '{partition_id}' "
+            f"(expecting {self._partition_block_queues.keys()})"
+        )
+
+        # In streaming mode, we immediately queue the block for output
+        if self._should_sort:
+            partition_shard = partition_shard.sort_by(
+                [(k, "ascending") for k in self._key_columns]
+            )
+        
+        self._partition_block_queues[partition_id].append(partition_shard)
+
+    def finalize(self, partition_id: int) -> Union[Block, Generator[Block, None, None]]:
+        # In streaming mode, yield all queued blocks
+        queue = self._partition_block_queues[partition_id]
+        if len(queue) == 1:
+            # Single block case - return directly
+            return queue.popleft()
+        else:
+            # Multiple blocks - yield them as a generator
+            def gen():
+                while queue:
+                    yield queue.popleft()
+            return gen()
+
+    def clear(self, partition_id: int):
+        self._partition_block_queues.pop(partition_id, None)
 
 
 @ray.remote
@@ -865,7 +929,33 @@ class HashShufflingOperatorBase(PhysicalOperator):
         num_partitions: int,
         partition_byte_size_estimate: int,
     ) -> int:
-        raise NotImplementedError()
+        dataset_size = num_partitions * partition_byte_size_estimate
+        # Estimate of object store memory required to accommodate all partitions
+        # handled by a single aggregator
+        aggregator_shuffle_object_store_memory_required: int = math.ceil(
+            dataset_size / num_aggregators
+        )
+        # Estimate of memory required to accommodate single partition as an output
+        # (inside Object Store)
+        output_object_store_memory_required: int = partition_byte_size_estimate
+
+        aggregator_total_memory_required: int = (
+            # Inputs (object store)
+            aggregator_shuffle_object_store_memory_required
+            +
+            # Output (object store)
+            output_object_store_memory_required
+        )
+
+        logger.debug(
+            f"Estimated memory requirement for shuffling operator "
+            f"(partitions={num_partitions}, aggregators={num_aggregators}): "
+            f"shuffle={aggregator_shuffle_object_store_memory_required / GiB:.2f}GiB, "
+            f"output={output_object_store_memory_required / GiB:.2f}GiB, "
+            f"total={aggregator_total_memory_required / GiB:.2f}GiB, "
+        )
+
+        return aggregator_total_memory_required
 
 
 class HashShuffleOperator(HashShufflingOperatorBase):
@@ -877,23 +967,35 @@ class HashShuffleOperator(HashShufflingOperatorBase):
         key_columns: Tuple[str],
         num_partitions: int,
         should_sort: bool = False,
+        strict_mode: bool = True,
         aggregator_ray_remote_args_override: Optional[Dict[str, Any]] = None,
     ):
+        # Choose aggregation factory based on strict_mode
+        if strict_mode:
+            # Use Concat for strict mode (all rows with same key in single block)
+            partition_aggregation_factory = lambda aggregator_id, target_partition_ids: Concat(
+                aggregator_id,
+                target_partition_ids,
+                should_sort=should_sort,
+                key_columns=key_columns,
+            )
+        else:
+            # Use StreamingConcat for non-strict mode (rows can be in multiple blocks)
+            partition_aggregation_factory = lambda aggregator_id, target_partition_ids: StreamingConcat(
+                aggregator_id,
+                target_partition_ids,
+                should_sort=should_sort,
+                key_columns=key_columns,
+            )
+            
         super().__init__(
-            name=f"Shuffle(key_columns={key_columns}, num_partitions={num_partitions})",
+            name=f"Shuffle(key_columns={key_columns}, num_partitions={num_partitions}, strict_mode={strict_mode})",
             input_ops=[input_op],
             data_context=data_context,
             key_columns=[key_columns],
             num_partitions=num_partitions,
             aggregator_ray_remote_args_override=aggregator_ray_remote_args_override,
-            partition_aggregation_factory=(
-                lambda aggregator_id, target_partition_ids: Concat(
-                    aggregator_id,
-                    target_partition_ids,
-                    should_sort=should_sort,
-                    key_columns=key_columns,
-                )
-            ),
+            partition_aggregation_factory=partition_aggregation_factory,
         )
 
     def _get_default_num_cpus_per_partition(self) -> int:
@@ -1102,6 +1204,13 @@ class HashShuffleAggregator:
             # Clear any remaining state (to release resources)
             self._agg.clear(partition_id)
 
-        # TODO break down blocks to target size
-        yield result
-        yield BlockAccessor.for_block(result).get_metadata()
+        # Handle both single block and generator cases
+        if isinstance(result, Block):
+            # Single block case - yield block and metadata
+            yield result
+            yield BlockAccessor.for_block(result).get_metadata()
+        else:
+            # Generator case - yield each block with its metadata
+            for block in result:
+                yield block
+                yield BlockAccessor.for_block(block).get_metadata()

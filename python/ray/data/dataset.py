@@ -1459,6 +1459,7 @@ class Dataset:
         shuffle: bool = False,
         keys: Optional[List[str]] = None,
         sort: bool = False,
+        strict_mode: bool = True,
     ) -> "Dataset":
         """Repartition the :class:`Dataset` into exactly this number of
         :ref:`blocks <dataset_concept>`.
@@ -1515,6 +1516,12 @@ class Dataset:
                 is set to True.
             sort: Whether the blocks should be sorted after repartitioning. Note,
                 that by default blocks will be sorted in the ascending order.
+            strict_mode: When True (default), ensures all rows with the same key
+                are placed in a single block. When False, rows with the same key
+                may be spread across multiple blocks within the same partition.
+                Setting to False can make the operation non-blocking and more
+                efficient when writing partitioned datasets. Only relevant when
+                `keys` is specified.
 
         Note that you must set either `num_blocks` or `target_num_rows_per_block`
         but not both.
@@ -1568,6 +1575,7 @@ class Dataset:
                 shuffle=shuffle,
                 keys=keys,
                 sort=sort,
+                strict_mode=strict_mode,
             )
 
         logical_plan = LogicalPlan(op, self.context)
@@ -4449,7 +4457,7 @@ class Dataset:
                 * order_by:
                     Sets the `ORDER BY` clause in the `CREATE TABLE` statement, iff not provided.
                     When overwriting an existing table, its previous `ORDER BY` (if any) is reused.
-                    Otherwise, a “best” column is selected automatically (favoring a timestamp column,
+                    Otherwise, a "best" column is selected automatically (favoring a timestamp column,
                     then a non-string column, and lastly the first column).
 
                 * partition_by:

@@ -92,6 +92,7 @@ class Repartition(AbstractAllToAll):
         shuffle: bool,
         keys: Optional[List[str]] = None,
         sort: bool = False,
+        strict_mode: bool = True,
     ):
         if shuffle:
             sub_progress_bar_names = [
@@ -111,6 +112,7 @@ class Repartition(AbstractAllToAll):
         self._shuffle = shuffle
         self._keys = keys
         self._sort = sort
+        self._strict_mode = strict_mode
 
     def aggregate_output_metadata(self) -> BlockMetadata:
         assert len(self._input_dependencies) == 1, len(self._input_dependencies)
