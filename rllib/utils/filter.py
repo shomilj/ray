@@ -421,7 +421,7 @@ class MeanStdFilter(Filter):
             if update:
                 if len(x.shape) == len(rs.shape) + 1:
                     # The vectorized case.
-                    for i in range(x.shape):
+                    for i in range(x.shape[0]):
                         rs.push(x[i])
                         buffer.push(x[i])
                 else:
